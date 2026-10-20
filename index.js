@@ -32,12 +32,15 @@ export function apply(ctx, config = {}) {
   const warn = (message) => {
     try { ctx.logger?.warn?.(`[dsh-onebot-qq-opsgate] ${message}`) } catch { console.warn(`[dsh-onebot-qq-opsgate] ${message}`) }
   }
+  const info = (message) => {
+    try { ctx.logger?.info?.(`[dsh-onebot-qq-opsgate] ${message}`) } catch { /* ignore */ }
+  }
 
   const options = {
     retryMs: Number(config?.retryMs) > 0 ? Number(config.retryMs) : 500,
     maxMs: Number(config?.maxMs) > 0 ? Number(config.maxMs) : 30000,
     settleRounds: Number(config?.settleRounds) > 0 ? Number(config.settleRounds) : 8,
-    log: { warn },
+    log: { warn, info },
   }
   // auto 模式的放行规则（显式传 deny/allow 时按旧模式走，下面两个字段不生效）
   if (Array.isArray(config?.allowedPrefixes)) options.allowedPrefixes = config.allowedPrefixes

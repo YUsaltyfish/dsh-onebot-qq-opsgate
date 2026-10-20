@@ -1,6 +1,6 @@
 {
   "name": "dsh-onebot-qq-opsgate",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Tool-scope gate for the dsh-onebot-qq preset: auto-detect all global tools and hide everything except mcp__qq__* from QQ sessions, without affecting any other DSH preset",
   "type": "module",
   "main": "./index.js",
