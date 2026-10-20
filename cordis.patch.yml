@@ -1,0 +1,107 @@
+# dsh-onebot-qq-opsgate bundle patch
+#
+# 作用：只覆盖 dsh-onebot-qq 的 `preset-qq-chat` 这一行，在它的 plugins 列表末尾追加本插件。
+#   · 本插件在 agent scope 内调用 ctx.tools.restrict({ deny }) → 把全局插件注册的工具（ops_*、
+#     agent-team、MCP 资源等）从 QQ 会话的工具目录里摘掉；
+#   · 只影响 qq-chat 会话，不碰网页/工作线/其他 preset；
+#   · 必须在 profile bundles 里排在 dsh-onebot-qq 之后（后层覆盖前层）。
+#
+# ⚠️ 本文件的 preset 内容由 scripts/sync-preset.mjs 从 dsh-onebot-qq 的 cordis.patch.yml 生成；
+#    dsh-onebot-qq 升级后重新生成，别手改下面这段。
+
+- id: preset-qq-chat
+  name: '@deepseek-ai/dsh-agent-preset'
+  config:
+    id: qq-chat
+    name: QQ 聊天
+    description: 纯聊天 + 联网；裁掉 shell / 文件 / 任务 / 技能 / 插件管理类工具（QQ 机器人安装即用）。
+    order: 50
+    plugins:
+      - id: persona
+        name: '@deepseek-ai/dsh-persona'
+        config:
+          prefix: |-
+            You are a QQ chat assistant. Reply naturally and briefly in the language of the incoming message.
+            QQ 线每轮必须调用 mcp__qq__* 工具才能让对方收到内容；只写正文等于没有回话。
+      - id: agent-instructions
+        name: '@deepseek-ai/dsh-agent-instructions'
+        config:
+          maxBytes: 65536
+      - id: time-context
+        name: '@deepseek-ai/dsh-time-context'
+
+      # ── shell：两平台都裁掉（纯聊天不需要）──
+      - id: tool-bash
+        name: '@deepseek-ai/dsh-tool-bash'
+        disabled: true
+      - id: tool-pwsh
+        name: '@deepseek-ai/dsh-tool-pwsh'
+        disabled: true
+
+      # ── 文件 / 搜索 / 任务 / 技能 / 交互卡片 / 插件管理：全裁 ──
+      - id: tool-fs
+        name: '@deepseek-ai/dsh-tool-fs'
+        disabled: true
+      - id: tool-fs-search
+        name: '@deepseek-ai/dsh-tool-fs-search'
+        disabled: true
+      - id: tool-jobs
+        name: '@deepseek-ai/dsh-tool-jobs'
+        disabled: true
+      - id: tool-schedule
+        name: '@deepseek-ai/dsh-tool-schedule'
+        disabled: true
+      - id: skill-filesystem
+        name: '@deepseek-ai/dsh-skill-filesystem'
+        disabled: true
+      - id: tool-skill
+        name: '@deepseek-ai/dsh-tool-skill'
+        disabled: true
+      - id: tool-ask-user
+        name: '@deepseek-ai/dsh-tool-ask-user'
+        disabled: true
+      - id: tool-todo
+        name: '@deepseek-ai/dsh-tool-todo'
+        disabled: true
+      - id: present
+        name: '@deepseek-ai/dsh-tool-present'
+        disabled: true
+      - id: tool-plugin-manager
+        name: '@deepseek-ai/dsh-plugin-manager/tools'
+        disabled: true
+      - id: tool-plugin-market
+        name: '@deepseek-ai/dsh-plugin-market/tools'
+        disabled: true
+
+      # ── 联网：搜索 / 抓取（QQ 线查资料靠它）──
+      - id: tool-web
+        name: '@deepseek-ai/dsh-tool-web'
+        config:
+          fetch: true
+          searchTimeoutMs: 60000
+
+      # ── 上下文压缩：QQ 会话长，阈值调低、保留量调小 ──
+      - id: compaction
+        name: cordis:group
+        group: true
+        isolate:
+          compaction: true
+          toolResultPruner: true
+        config:
+          - id: compaction-basic
+            name: '@deepseek-ai/dsh-compaction-basic'
+            config:
+              thresholdRatio: 0.1
+              retainTokens: 20000
+          - id: command-compact
+            name: '@deepseek-ai/dsh-command-compact'
+          - id: tool-result-pruner
+            name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+            config:
+              thresholdChars: 8192
+              headChars: 4096
+              tailChars: 1024
+
+      # ── 本包：工具作用域门（preset 内加载；挡住全局插件注册的工具）──
+      - id: dsh-onebot-qq-opsgate
+        name: 'dsh-onebot-qq-opsgate'

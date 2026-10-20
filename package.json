@@ -1,0 +1,42 @@
+{
+  "name": "dsh-onebot-qq-opsgate",
+  "version": "0.1.0",
+  "description": "Tool-scope gate for the dsh-onebot-qq preset: hide host-side / team / MCP tools from QQ sessions via ctx.tools.restrict(), without affecting any other DSH preset",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22",
+    "dsh": ">=0.2.1-rc.2 <0.3.0"
+  },
+  "scripts": {
+    "test": "node --test",
+    "check:syntax": "node --check index.js && node --check lib/gate.js",
+    "sync:preset": "node scripts/sync-preset.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "qq",
+    "onebot",
+    "tools",
+    "restrict"
+  ],
+  "license": "MIT"
+}
