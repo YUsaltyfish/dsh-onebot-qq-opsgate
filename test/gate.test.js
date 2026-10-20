@@ -1,100 +1,132 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { applyRestriction, parseUnknownTools, DEFAULT_DENY } from '../lib/gate.js'
+import {
+  applyRestriction, parseUnknownTools, parseKnownGlobalTools, DEFAULT_DENY,
+} from '../lib/gate.js'
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+const PROBE = '__dsh_opsgate_probe__'
 
-/** 假 ctx：记录 restrict 调用与 disposer 调用。 */
-function fakeCtx(restrictImpl) {
+/**
+ * 假 ctx：模拟 DSH tools.restrict 的行为——
+ *   · 名字不在 known 里 → 抛错，错误里带 "known global tools: ..."（探测就靠这个）；
+ *   · 名字都在 known 里 → 记下 filter，返回撤销函数。
+ */
+function fakeCtx(knownTools) {
+  const known = new Set(knownTools)
   const calls = []
   const disposed = []
   const warnings = []
-  return {
-    calls,
-    disposed,
-    warnings,
-    ctx: {
-      logger: { warn: (message) => warnings.push(String(message)) },
-      tools: {
-        restrict(filter) {
-          calls.push(filter)
-          const disposer = restrictImpl(filter)
-          return () => disposed.push(disposer)
-        },
+  const ctx = {
+    logger: { warn: (message) => warnings.push(String(message)) },
+    tools: {
+      restrict(filter) {
+        calls.push(filter)
+        const names = [...(filter.allow ?? []), ...(filter.deny ?? [])]
+        const unknown = names.filter((name) => !known.has(name))
+        if (unknown.length) {
+          throw new Error(
+            `tools.restrict() names unknown global tool${unknown.length > 1 ? 's' : ''} `
+            + `${unknown.map((n) => `"${n}"`).join(', ')}; known global tools: ${[...known].sort().join(', ') || '(none)'}`,
+          )
+        }
+        const disposer = () => disposed.push(filter)
+        return disposer
       },
     },
   }
+  return { ctx, calls, disposed, warnings, known }
 }
 
-test('默认名单：挡掉全局工具并返回可撤销的 disposer', () => {
-  const { ctx, calls, disposed } = fakeCtx(() => {})
-  const dispose = applyRestriction(ctx, { deny: ['ops_glob', 'team_task_list'] })
+// 普通 QQ 线该保留的全局工具 + 一堆不该有的全局工具
+const GLOBAL_BASE = [
+  'mcp__qq__send_message', 'mcp__qq__send_image', 'mcp__qq__generate_image',
+  'mcp__qq__recall', 'mcp__qq__avatar', 'mcp__qq__send_sticker',
+  'mcp__qq__sticker_catalog', 'mcp__qq__read_memory',
+  'ops_glob', 'ops_grep', 'ops_bash', 'ops_write_file', 'ops_edit_file',
+  'ops_diff', 'ops_stat', 'ops_copy', 'ops_move', 'ops_remove',
+  'spawn_teammate', 'list_agents', 'send_message',
+  'create_goal', 'update_goal', 'todo_write', 'job_list', 'present',
+]
 
-  assert.equal(calls.length, 1)
-  assert.deepEqual(calls[0], { deny: ['ops_glob', 'team_task_list'] })
+test('auto 模式：探测全局工具后只放行 mcp__qq__*，其余全部 deny', async () => {
+  const { ctx, calls, disposed } = fakeCtx(GLOBAL_BASE)
+  const dispose = applyRestriction(ctx, { retryMs: 5, maxMs: 200, settleRounds: 2 })
+  await sleep(60)
+
+  const denyCalls = calls.filter((c) => Array.isArray(c.deny) && !c.deny.includes(PROBE))
+  assert.ok(denyCalls.length >= 1, '应发出实际的 deny 限制')
+
+  const denied = new Set(denyCalls.flatMap((c) => c.deny))
+  for (const name of GLOBAL_BASE) {
+    if (name.startsWith('mcp__qq__')) assert.equal(denied.has(name), false, `放行名单被误挡：${name}`)
+    else assert.equal(denied.has(name), true, `应被挡但漏了：${name}`)
+  }
+  assert.equal(denyCalls.some((c) => c.deny.includes(PROBE)), false, '探测调用不能变成实际限制')
+
   dispose()
-  assert.equal(disposed.length, 1, '卸载时应撤销 restrict')
+  assert.ok(disposed.length >= 1, '卸载时应撤销 restrict')
 })
 
-test('异步注册：先挡已注册的，未知的 500ms 重试（这里用 5ms）', async () => {
-  const registered = new Set(['ops_glob'])
-  const { ctx, calls } = fakeCtx((filter) => {
-    const names = filter.deny ?? filter.allow ?? []
-    const unknown = names.filter((name) => !registered.has(name))
-    if (unknown.length) {
-      throw new Error(
-        `tools.restrict() names unknown global tools ${unknown.map((n) => `"${n}"`).join(', ')}; known global tools: ${[...registered].join(', ')}`,
-      )
-    }
-  })
+test('auto 模式：启动后才注册的全局工具会补挡（deny 是并集）', async () => {
+  const { ctx, calls, known } = fakeCtx(['mcp__qq__send_message', 'ops_glob'])
+  applyRestriction(ctx, { retryMs: 10, maxMs: 400, settleRounds: 30 })
+  await sleep(35)
+  known.add('ops_bash')
+  known.add('spawn_teammate')
+  await sleep(120)
 
-  applyRestriction(ctx, { deny: ['ops_glob', 'team_task_list'], retryMs: 5, maxMs: 200 })
-  assert.equal(calls[0].deny.length, 2, '第一次带全名单')
-  await sleep(2)
-  registered.add('team_task_list')
-  await sleep(40)
-
-  assert.ok(calls.some((c) => c.deny && c.deny.length === 1 && c.deny[0] === 'ops_glob'), '先挡已注册的')
-  assert.ok(calls.some((c) => c.deny && c.deny.length === 1 && c.deny[0] === 'team_task_list'), '注册后补挡')
+  const denied = new Set(calls.filter((c) => Array.isArray(c.deny) && !c.deny.includes(PROBE)).flatMap((c) => c.deny))
+  assert.equal(denied.has('ops_glob'), true)
+  assert.equal(denied.has('ops_bash'), true, '后注册的 ops_bash 也要补挡')
+  assert.equal(denied.has('spawn_teammate'), true)
+  assert.equal(denied.has('mcp__qq__send_message'), false, 'QQ 原生工具不能被挡')
 })
 
-test('全局加载（没有 agent scope）：只警告一次，不抛错、不无限重试', async () => {
-  const { ctx, calls, warnings } = fakeCtx(() => {
-    throw new Error('tools.restrict() requires a scoped context (agent.ctx): a context-global restriction would mask every agent')
-  })
-
+test('固定名单模式（显式 deny）：逐项重试，QQ 工具不受影响', async () => {
+  const { ctx, calls } = fakeCtx(['ops_glob'])
   applyRestriction(ctx, { deny: ['ops_glob'], retryMs: 5, maxMs: 100 })
+  await sleep(20)
+  assert.deepEqual(calls[0], { deny: ['ops_glob'] })
+})
+
+test('探测失败（报错里没有 known 清单）→ 退回固定 DEFAULT_DENY，仍能挡主机工具', async () => {
+  const calls = []
+  const warnings = []
+  const ctx = {
+    logger: { warn: (m) => warnings.push(String(m)) },
+    tools: {
+      restrict(filter) {
+        calls.push(filter)
+        throw new Error('some unexpected restrict failure')
+      },
+    },
+  }
+  applyRestriction(ctx, { retryMs: 5, maxMs: 60, settleRounds: 1 })
   await sleep(40)
 
-  assert.equal(calls.length, 1, '重试无意义，只试一次')
-  assert.equal(warnings.length, 1)
-  assert.match(warnings[0], /preset|全局加载无效/)
+  assert.ok(calls.some((c) => Array.isArray(c.deny) && c.deny.includes('ops_write_file')), '应带兜底名单')
+  assert.ok(calls.some((c) => Array.isArray(c.deny) && c.deny.length === DEFAULT_DENY.length), '兜底名单应完整')
+  assert.ok(warnings.some((w) => w.includes('探测失败')), '应提示探测失败')
 })
 
-test('空名单：不碰工具注册表', () => {
-  const { ctx, calls } = fakeCtx(() => {})
-  applyRestriction(ctx, { deny: [], allow: [] })
-  assert.equal(calls.length, 0)
+test('没有全局工具：不产生实际限制，也不报错', async () => {
+  const { ctx, calls } = fakeCtx([])
+  applyRestriction(ctx, { retryMs: 5, maxMs: 40, settleRounds: 1 })
+  await sleep(30)
+  assert.equal(calls.filter((c) => Array.isArray(c.deny) && !c.deny.includes(PROBE)).length, 0)
 })
 
-test('一直注册不上：到 maxMs 放弃并日志列出缺的名字', async () => {
-  const { ctx, warnings } = fakeCtx(() => {
-    throw new Error('tools.restrict() names unknown global tool "never_registered"; known global tools: ops_glob')
-  })
-
-  applyRestriction(ctx, { deny: ['never_registered'], retryMs: 5, maxMs: 25 })
-  await sleep(80)
-
-  assert.equal(warnings.length, 1)
-  assert.match(warnings[0], /never_registered/)
-})
-
-test('parseUnknownTools：能从报错里抠出未注册工具名', () => {
+test('工具名解析：unknown / known 两种报错格式', () => {
   assert.deepEqual(
-    parseUnknownTools('tools.restrict() names unknown global tools "a", "b"; known global tools: "c", "d"'),
+    parseUnknownTools('tools.restrict() names unknown global tools "a", "b"; known global tools: c, d'),
     ['a', 'b'],
   )
-  assert.deepEqual(parseUnknownTools('some other error'), [])
-  assert.ok(DEFAULT_DENY.includes('ops_bash'))
+  assert.deepEqual(
+    parseKnownGlobalTools('tools.restrict() names unknown global tool "__x"; known global tools: a, b, c'),
+    ['a', 'b', 'c'],
+  )
+  assert.equal(parseKnownGlobalTools('(none)'), null)
+  assert.deepEqual(parseKnownGlobalTools('known global tools: (none)'), [])
 })

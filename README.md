@@ -28,10 +28,27 @@ dsh plugin --profile web add link:/abs/path/dsh-onebot-qq-opsgate
 ## 说明
 
 - 只影响 `qq-chat` preset 的 QQ 会话，不碰网页 / 工作线 / 其他 preset；
-- 全局工具是异步注册的：插件先挡已注册的，未注册的每 500ms 重试（最多 90 秒）；
-- 默认拦截名单在 `lib/gate.js` 的 `DEFAULT_DENY`，可在 preset 配置里覆盖；
+- **自动模式（默认）**：探测 DSH 当前所有全局工具，只放行 `mcp__qq__*`（及 `web_search` / `web_fetch`，如果它们是全局的），其余全挡 —— 不需要维护名单，新装的全局插件也会被挡住；
+- 启动后每 500ms 复查一次，持续几秒补挡晚注册的工具，之后停止；
 - `dsh-onebot-qq` 升级 preset 后，跑一次 `npm run sync:preset` 同步本插件里的 preset 副本；
 - 卸载即恢复原状。
+
+## 配置（一般不用改）
+
+默认 auto 模式即可。要调整放行规则，在 profile 的 `cordis.patch.yml` 里覆盖 `preset-qq-chat`（整段替换）时给本插件加 config：
+
+```yaml
+- id: dsh-onebot-qq-opsgate
+  name: 'dsh-onebot-qq-opsgate'
+  config:
+    allowedPrefixes: ['mcp__qq__', 'my_tool_']   # 按前缀放行
+    keep: ['web_search', 'web_fetch']             # 精确放行
+    # retryMs: 500        # 复查间隔
+    # settleRounds: 8     # 连续几轮没新工具就停（默认 ~4 秒）
+    # maxMs: 30000        # 最长运行时间
+```
+
+仍兼容旧配置：显式写 `deny: [...]` 或 `allow: [...]` 会退回固定名单模式。
 
 ## License
 
