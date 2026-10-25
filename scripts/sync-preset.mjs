@@ -39,7 +39,7 @@ while (preset.length && preset[preset.length - 1].trim() === '') preset.pop()
 
 const gateRow = [
   '',
-  '      # ── 本包：工具作用域门（preset 内加载；挡住全局插件注册的工具）──',
+  '      # ── 本包：工具作用域门（preset 内加载；restrict 摘全局工具 + guard 拦执行）──',
   "      - id: dsh-onebot-qq-opsgate",
   "        name: 'dsh-onebot-qq-opsgate'",
   '',
@@ -51,6 +51,7 @@ const header = [
   '# 作用：只覆盖 dsh-onebot-qq 的 `preset-qq-chat` 这一行，在它的 plugins 列表末尾追加本插件。',
   '#   · 本插件在 agent scope 内调用 ctx.tools.restrict({ deny }) → 把全局插件注册的工具（ops_*、',
   '#     agent-team、MCP 资源等）从 QQ 会话的工具目录里摘掉；',
+  '#   · 再用 ctx.tools.guard() 在执行前拦住 scoped 注册的工具（restrict 管不到这一层）；',
   '#   · 只影响 qq-chat 会话，不碰网页/工作线/其他 preset；',
   '#   · 必须在 profile bundles 里排在 dsh-onebot-qq 之后（后层覆盖前层）。',
   '#',

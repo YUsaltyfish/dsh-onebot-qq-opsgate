@@ -18,6 +18,8 @@ function fakeCtx(knownTools) {
   const calls = []
   const disposed = []
   const warnings = []
+  const guards = []
+  const guardDisposed = []
   const ctx = {
     logger: { warn: (message) => warnings.push(String(message)) },
     tools: {
@@ -34,9 +36,13 @@ function fakeCtx(knownTools) {
         const disposer = () => disposed.push(filter)
         return disposer
       },
+      guard(fn) {
+        guards.push(fn)
+        return () => guardDisposed.push(fn)
+      },
     },
   }
-  return { ctx, calls, disposed, warnings, known }
+  return { ctx, calls, disposed, warnings, known, guards, guardDisposed }
 }
 
 // 普通 QQ 线该保留的全局工具 + 一堆不该有的全局工具
@@ -116,6 +122,64 @@ test('没有全局工具：不产生实际限制，也不报错', async () => {
   applyRestriction(ctx, { retryMs: 5, maxMs: 40, settleRounds: 1 })
   await sleep(30)
   assert.equal(calls.filter((c) => Array.isArray(c.deny) && !c.deny.includes(PROBE)).length, 0)
+})
+
+test('auto 模式：guard 在执行前拦住 scoped 工具，卸载时撤销', () => {
+  const { ctx, guards, guardDisposed } = fakeCtx(GLOBAL_BASE)
+  const dispose = applyRestriction(ctx, { retryMs: 5, maxMs: 200, settleRounds: 2 })
+
+  assert.equal(guards.length, 1, '应安装执行前守卫')
+  const guard = guards[0]
+  assert.equal(guard({ name: 'mcp__qq__send_message' }), undefined, 'QQ 原生工具应放行')
+  assert.equal(guard({ name: 'web_search' }), undefined, 'web_search 应放行')
+  assert.match(String(guard({ name: 'ops_bash' })), /QQ 线不提供 ops_bash/)
+  assert.match(String(guard({ name: 'spawn_teammate' })), /QQ 线不提供 spawn_teammate/)
+
+  dispose()
+  assert.equal(guardDisposed.length, 1, '卸载时应撤销 guard')
+})
+
+test('固定 deny 模式：guard 只拦名单内工具', () => {
+  const { ctx, guards } = fakeCtx(['ops_glob'])
+  const dispose = applyRestriction(ctx, { deny: ['ops_glob'] })
+  const guard = guards[0]
+  assert.equal(guard({ name: 'mcp__qq__send_message' }), undefined)
+  assert.match(String(guard({ name: 'ops_glob' })), /QQ 线不提供 ops_glob/)
+  assert.equal(guard({ name: 'ops_bash' }), undefined, 'deny 名单外的工具不拦')
+  dispose()
+})
+
+test('固定 allow 模式：guard 只放行名单内工具', () => {
+  const { ctx, guards } = fakeCtx(['mcp__qq__send_message'])
+  const dispose = applyRestriction(ctx, { allow: ['mcp__qq__send_message'] })
+  const guard = guards[0]
+  assert.equal(guard({ name: 'mcp__qq__send_message' }), undefined)
+  assert.match(String(guard({ name: 'ops_bash' })), /QQ 线不提供 ops_bash/)
+  dispose()
+})
+
+test('guard 不可用：告警但不影响 restrict 屏蔽', async () => {
+  const calls = []
+  const warnings = []
+  const known = new Set(['ops_glob'])
+  const ctx = {
+    logger: { warn: (message) => warnings.push(String(message)) },
+    tools: {
+      restrict(filter) {
+        calls.push(filter)
+        const names = [...(filter.allow ?? []), ...(filter.deny ?? [])]
+        const unknown = names.filter((name) => !known.has(name))
+        if (unknown.length) {
+          throw new Error(`known global tools: ${[...known].join(', ')}`)
+        }
+        return () => {}
+      },
+    },
+  }
+  applyRestriction(ctx, { retryMs: 5, maxMs: 80, settleRounds: 1 })
+  await sleep(30)
+  assert.ok(warnings.some((w) => w.includes('tools.guard 不可用')), '应提示 guard 不可用')
+  assert.ok(calls.some((c) => Array.isArray(c.deny) && c.deny.includes('ops_glob')), 'restrict 仍应生效')
 })
 
 test('工具名解析：unknown / known 两种报错格式', () => {

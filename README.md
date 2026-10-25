@@ -23,11 +23,18 @@ dsh plugin --profile web add link:/abs/path/dsh-onebot-qq-opsgate
 
 ## 验证
 
-开一个 QQ 新会话，让它尝试 `ops_bash` / `spawn_teammate` 之类的工具 —— 它应该不知道这些工具存在。
+开一个 QQ 新会话，让它尝试 `ops_bash` / `spawn_teammate` 之类的工具：
+
+- **全局工具**（`ops_glob` / `ops_write_file` 等）：会直接从这个会话的工具目录里消失；
+- **agent scope 注册的工具**（`ops_bash` / agent-team 等）：目录里仍可能看得见，但真正调用会返回
+  `QQ 线不提供 ops_bash（dsh-onebot-qq-opsgate 工具门）`。
 
 ## 说明
 
 - 只影响 `qq-chat` preset 的 QQ 会话，不碰网页 / 工作线 / 其他 preset；
+- **两层防线**：
+  1. `tools.restrict()` 把 profile/bundle 层全局注册的工具从 QQ 会话目录摘掉；
+  2. `tools.guard()` 在**执行前**拒绝 scoped 注册的工具（`restrict` 管不到这一层）。
 - **自动模式（默认）**：探测 DSH 当前所有全局工具，只放行 `mcp__qq__*`（及 `web_search` / `web_fetch`，如果它们是全局的），其余全挡 —— 不需要维护名单，新装的全局插件也会被挡住；
 - 启动后每 500ms 复查一次，持续几秒补挡晚注册的工具，之后停止；
 - `dsh-onebot-qq` 升级 preset 后，跑一次 `npm run sync:preset` 同步本插件里的 preset 副本；
